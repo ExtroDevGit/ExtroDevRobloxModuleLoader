@@ -1,0 +1,6 @@
+# Roblox Studio lock files
+/*.rbxlx.lock
+/*.rbxl.lock
+
+# Files removed by two-way sync are moved here instead of being deleted
+/.rojo-trash/

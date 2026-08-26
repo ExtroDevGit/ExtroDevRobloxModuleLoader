@@ -1,0 +1,403 @@
+<roblox version="4">
+  <Item class="ReplicatedStorage" referent="0">
+    <Properties>
+      <string name="Name">ReplicatedStorage</string>
+    </Properties>
+    <Item class="Folder" referent="1">
+      <Properties>
+        <string name="Name">ModuleLoader</string>
+      </Properties>
+      <Item class="ModuleScript" referent="2">
+        <Properties>
+          <string name="Name">Loader</string>
+          <string name="Source"><![CDATA[--[[
+	Shared by ServerScriptService.ModuleLoader and
+	StarterPlayerScripts.ModuleLoader -- see their init scripts and the
+	project README for how this gets used.
+]]
+
+local CollectionService = game:GetService("CollectionService")
+
+local Loader = {}
+
+--[[
+	Requires every ModuleScript directly inside `folder`. A module that just
+	wants to run once at startup can do all of its work at the top level of
+	the script -- requiring it is enough. A module that returns a table with
+	an `Init` function gets that function called right after being required,
+	for modules that need to set something up before other code can use them.
+]]
+function Loader.loadModules(folder: Instance)
+	for _, child in folder:GetChildren() do
+		if not child:IsA("ModuleScript") then
+			continue
+		end
+
+		local ok, result = pcall(require, child)
+		if not ok then
+			warn(("ModuleLoader: %s failed to load: %s"):format(child:GetFullName(), tostring(result)))
+			continue
+		end
+
+		if type(result) == "table" and type(result.Init) == "function" then
+			local initOk, err = pcall(result.Init)
+			if not initOk then
+				warn(("ModuleLoader: %s.Init() failed: %s"):format(child:GetFullName(), tostring(err)))
+			end
+		end
+	end
+end
+
+--[[
+	Requires every ModuleScript directly inside `folder`. Each one is
+	expected to be named `<Tag><suffix>` (e.g. `NPC_Server`, with
+	suffix = "_Server") and return a table with a `Start` function, and
+	optionally a `Stop` function.
+
+	`Start(instance)` is called for every instance already tagged `<Tag>`
+	via CollectionService, and again for every instance tagged `<Tag>`
+	afterwards. `Stop(instance)`, if present, is called when an instance
+	loses the `<Tag>` tag (including being destroyed).
+]]
+function Loader.loadComponents(folder: Instance, suffix: string)
+	for _, child in folder:GetChildren() do
+		if not child:IsA("ModuleScript") then
+			continue
+		end
+
+		local tag = child.Name
+		if tag:sub(-#suffix) == suffix then
+			tag = tag:sub(1, -#suffix - 1)
+		else
+			warn(("ModuleLoader: %s's name doesn't end in '%s'; using '%s' as its tag"):format(
+				child:GetFullName(),
+				suffix,
+				tag
+			))
+		end
+
+		local ok, Component = pcall(require, child)
+		if not ok then
+			warn(("ModuleLoader: %s failed to load: %s"):format(child:GetFullName(), tostring(Component)))
+			continue
+		end
+
+		if type(Component) ~= "table" or type(Component.Start) ~= "function" then
+			warn(("ModuleLoader: %s must return a table with a Start function"):format(child:GetFullName()))
+			continue
+		end
+
+		local function start(instance: Instance)
+			local startOk, err = pcall(Component.Start, instance)
+			if not startOk then
+				warn(("ModuleLoader: %s.Start() failed for %s: %s"):format(child.Name, instance:GetFullName(), tostring(err)))
+			end
+		end
+
+		local function stop(instance: Instance)
+			if type(Component.Stop) == "function" then
+				pcall(Component.Stop, instance)
+			end
+		end
+
+		for _, instance in CollectionService:GetTagged(tag) do
+			start(instance)
+		end
+		CollectionService:GetInstanceAddedSignal(tag):Connect(start)
+		CollectionService:GetInstanceRemovedSignal(tag):Connect(stop)
+	end
+end
+
+return Loader
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="ServerScriptService" referent="3">
+    <Properties>
+      <string name="Name">ServerScriptService</string>
+    </Properties>
+    <Item class="Script" referent="4">
+      <Properties>
+        <string name="Name">ModuleLoader</string>
+        <token name="RunContext">0</token>
+        <string name="Source"><![CDATA[local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Loader = require(ReplicatedStorage.ModuleLoader.Loader)
+
+Loader.loadModules(script.Modules)
+Loader.loadComponents(script.Components, "_Server")
+]]></string>
+      </Properties>
+      <Item class="Folder" referent="5">
+        <Properties>
+          <string name="Name">Components</string>
+        </Properties>
+        <Item class="ModuleScript" referent="6">
+          <Properties>
+            <string name="Name">NPC_Server</string>
+            <string name="Source"><![CDATA[--[[
+	Runs automatically on every instance tagged "NPC" (via CollectionService),
+	present now or added later. See ReplicatedStorage.ModuleLoader.Loader.
+]]
+
+local Component = {}
+
+function Component.Start(instance: Instance)
+	print("NPC server component started for", instance:GetFullName())
+end
+
+function Component.Stop(instance: Instance)
+	print("NPC server component stopped for", instance:GetFullName())
+end
+
+return Component
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+      <Item class="Script" referent="7">
+        <Properties>
+          <string name="Name">HowToUse</string>
+          <bool name="Disabled">true</bool>
+          <token name="RunContext">0</token>
+          <string name="Source"><![CDATA[--[[
+	HOW TO USE MODULELOADER (server side) -- reference only, never runs.
+
+	This script is Disabled (see HowToUse.meta.json) and does nothing even if
+	re-enabled: it's a sibling of Components/ and Modules/, and the loader
+	only scans *inside* those two folders, so it's never picked up either
+	way. Keep it as living documentation, or delete it once your team knows
+	the pattern.
+
+	=====================================================================
+	Modules/ -- required once, automatically, when this ModuleLoader starts.
+	=====================================================================
+
+	No setup needed? Just do the work at the top level:
+
+		-- Modules/Analytics.luau
+		print("Analytics module loaded")
+		return {}
+
+	Need an explicit setup step? Return a table with Init, and it's called
+	right after the module is required:
+
+		-- Modules/PlayerData.luau
+		local PlayerData = {}
+		function PlayerData.Init()
+			print("PlayerData ready")
+		end
+		return PlayerData
+
+	=====================================================================
+	Components/ -- matched to CollectionService tags by name.
+	=====================================================================
+
+	Name the file `<Tag>_Server` (client side: `<Tag>_Client`, in
+	StarterPlayerScripts.ModuleLoader.Components) and return a table with a
+	Start function (required) and a Stop function (optional):
+
+		-- Components/Door_Server.luau
+		local Door = {}
+
+		function Door.Start(instance: Instance)
+			-- Runs once per instance tagged "Door", present now or added
+			-- later. `instance` is the tagged instance itself.
+			instance:SetAttribute("IsOpen", false)
+		end
+
+		function Door.Stop(instance: Instance)
+			-- Runs when an instance loses the "Door" tag, or is destroyed.
+		end
+
+		return Door
+
+	Tag a Part "Door" -- with the Tag Editor plugin, or
+	CollectionService:AddTag(part, "Door") in code -- and Door.Start runs on
+	it automatically. No manual wiring needed.
+
+	See Components/NPC_Server.luau and Modules/Test.luau for working
+	examples you can run right now.
+]]
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Folder" referent="8">
+        <Properties>
+          <string name="Name">Modules</string>
+        </Properties>
+        <Item class="ModuleScript" referent="9">
+          <Properties>
+            <string name="Name">Test</string>
+            <string name="Source"><![CDATA[--[[
+	Required automatically at startup. See ReplicatedStorage.ModuleLoader.Loader.
+]]
+
+local Module = {}
+
+function Module.Init()
+	print("Test server module initialized")
+end
+
+return Module
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="StarterPlayer" referent="10">
+    <Properties>
+      <string name="Name">StarterPlayer</string>
+    </Properties>
+    <Item class="StarterCharacterScripts" referent="11">
+      <Properties>
+        <string name="Name">StarterCharacterScripts</string>
+      </Properties>
+      <Item class="ModuleScript" referent="12">
+        <Properties>
+          <string name="Name">Placeholder</string>
+          <string name="Source"><![CDATA[--[[
+	StarterCharacterScripts re-runs its contents every time a character
+	spawns, unlike StarterPlayerScripts (once per player). Put per-character
+	LocalScripts/ModuleScripts here; delete this placeholder once you do.
+]]
+return nil
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+    <Item class="StarterPlayerScripts" referent="13">
+      <Properties>
+        <string name="Name">StarterPlayerScripts</string>
+      </Properties>
+      <Item class="LocalScript" referent="14">
+        <Properties>
+          <string name="Name">ModuleLoader</string>
+          <string name="Source"><![CDATA[local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Loader = require(ReplicatedStorage.ModuleLoader.Loader)
+
+Loader.loadModules(script.Modules)
+Loader.loadComponents(script.Components, "_Client")
+]]></string>
+        </Properties>
+        <Item class="Folder" referent="15">
+          <Properties>
+            <string name="Name">Components</string>
+          </Properties>
+          <Item class="ModuleScript" referent="16">
+            <Properties>
+              <string name="Name">NPC_Client</string>
+              <string name="Source"><![CDATA[--[[
+	Runs automatically on every instance tagged "NPC" (via CollectionService),
+	present now or added later. See ReplicatedStorage.ModuleLoader.Loader.
+]]
+
+local Component = {}
+
+function Component.Start(instance: Instance)
+	print("NPC client component started for", instance:GetFullName())
+end
+
+function Component.Stop(instance: Instance)
+	print("NPC client component stopped for", instance:GetFullName())
+end
+
+return Component
+]]></string>
+            </Properties>
+          </Item>
+        </Item>
+        <Item class="LocalScript" referent="17">
+          <Properties>
+            <string name="Name">HowToUse</string>
+            <bool name="Disabled">true</bool>
+            <string name="Source"><![CDATA[--[[
+	HOW TO USE MODULELOADER (client side) -- reference only, never runs.
+
+	This script is Disabled (see HowToUse.meta.json) and does nothing even if
+	re-enabled: it's a sibling of Components/ and Modules/, and the loader
+	only scans *inside* those two folders, so it's never picked up either
+	way. Keep it as living documentation, or delete it once your team knows
+	the pattern.
+
+	=====================================================================
+	Modules/ -- required once, automatically, when this ModuleLoader starts.
+	=====================================================================
+
+	No setup needed? Just do the work at the top level:
+
+		-- Modules/HudSetup.luau
+		print("Hud module loaded")
+		return {}
+
+	Need an explicit setup step? Return a table with Init, and it's called
+	right after the module is required:
+
+		-- Modules/Settings.luau
+		local Settings = {}
+		function Settings.Init()
+			print("Settings ready")
+		end
+		return Settings
+
+	=====================================================================
+	Components/ -- matched to CollectionService tags by name.
+	=====================================================================
+
+	Name the file `<Tag>_Client` (server side: `<Tag>_Server`, in
+	ServerScriptService.ModuleLoader.Components) and return a table with a
+	Start function (required) and a Stop function (optional):
+
+		-- Components/Glow_Client.luau
+		local Glow = {}
+
+		function Glow.Start(instance: Instance)
+			-- Runs once per instance tagged "Glow", present now or added
+			-- later. `instance` is the tagged instance itself.
+		end
+
+		function Glow.Stop(instance: Instance)
+			-- Runs when an instance loses the "Glow" tag, or is destroyed.
+		end
+
+		return Glow
+
+	Tag a Part "Glow" -- with the Tag Editor plugin, or
+	CollectionService:AddTag(part, "Glow") in code -- and Glow.Start runs on
+	it automatically, on every client that can see it. No manual wiring
+	needed.
+
+	See Components/NPC_Client.luau and Modules/Test.luau for working
+	examples you can run right now.
+]]
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="Folder" referent="18">
+          <Properties>
+            <string name="Name">Modules</string>
+          </Properties>
+          <Item class="ModuleScript" referent="19">
+            <Properties>
+              <string name="Name">Test</string>
+              <string name="Source"><![CDATA[--[[
+	Required automatically at startup. See ReplicatedStorage.ModuleLoader.Loader.
+]]
+
+local Module = {}
+
+function Module.Init()
+	print("Test client module initialized")
+end
+
+return Module
+]]></string>
+            </Properties>
+          </Item>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+</roblox>
