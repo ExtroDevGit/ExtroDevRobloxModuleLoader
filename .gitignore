@@ -4,3 +4,6 @@
 
 # Files removed by two-way sync are moved here instead of being deleted
 /.rojo-trash/
+
+# Build output (now published via GitHub Releases)
+/dist/
