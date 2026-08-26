@@ -11,6 +11,7 @@ end
 
 function Component.Stop(instance: Instance)
 	print("NPC server component stopped for", instance:GetFullName())
+	instance:Destroy()
 end
 
 return Component
